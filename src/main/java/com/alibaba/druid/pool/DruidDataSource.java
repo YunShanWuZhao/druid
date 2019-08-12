@@ -1775,6 +1775,43 @@ public class DruidDataSource extends DruidAbstractDataSource implements DruidDat
         }
 
         LOG.error("discard connection", error);
+
+        // for mysql
+        if (onFatalError
+                && keepAlive
+                && error != null
+                && error.getClass().getSimpleName().equals("CommunicationsException")
+                && error.getClass().getName().startsWith("com.mysql.")
+                && validConnectionChecker != null
+        ) {
+            lock.lock();
+            try {
+                if (onFatalError) {
+                    DruidConnectionHolder[] validConnections = new DruidConnectionHolder[poolingCount];
+                    int validCount = 0;
+                    for (int i = 0; i < poolingCount; ++i) {
+                        DruidConnectionHolder connHolder = connections[i];
+                        try {
+                            boolean valid = validConnectionChecker.isValidConnection(connHolder.conn, validationQuery, validationQueryTimeout);
+                            if (valid) {
+                                validConnections[validCount++] = connHolder;
+                            }
+                        } catch (Exception ex) {
+                            // skip
+                        }
+                    }
+
+                    if (validCount < poolingCount) {
+                        Arrays.fill(connections, validCount, poolingCount, null);
+                        System.arraycopy(validConnections, 0, connections, 0, validCount);
+                    }
+
+                    onFatalError = true;
+                }
+            } finally {
+               lock.unlock();
+            }
+        }
     }
 
     /**
